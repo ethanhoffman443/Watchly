@@ -604,6 +604,12 @@ async function fetchIdentity(payload) {
                 if (cb) cb.checked = true;
             });
 
+            for (const [field, name] of [['random_movie_genres', 'random-movie-genre'], ['random_series_genres', 'random-series-genre']]) {
+                document.querySelectorAll(`input[name="${name}"]`).forEach(cb => {
+                    cb.checked = (s[field] || []).includes(cb.value);
+                });
+            }
+
             // Catalogs
             if (s.catalogs && Array.isArray(s.catalogs)) {
                 const catalogs = appState ? appState.catalogs : [];

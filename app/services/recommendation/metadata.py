@@ -3,8 +3,9 @@ from typing import Any
 
 from loguru import logger
 
-from app.core.constants import DEFAULT_CONCURRENCY_LIMIT
+from app.core.constants import DEFAULT_CONCURRENCY_LIMIT, FULL_METADATA_ITEMS
 from app.services.poster_ratings.factory import PosterProvider, poster_ratings_factory
+from app.services.tmdb.genre import movie_genres, series_genres
 
 
 class RecommendationMetadata:
@@ -145,53 +146,73 @@ class RecommendationMetadata:
         media_type: str,
         user_settings: Any = None,
     ) -> list[dict[str, Any]]:
-        """Fetch details for a batch of items in parallel with target-based short-circuiting."""
-        final_results = []
+        """Format candidates as Stremio metas, keeping their order.
+
+        The first FULL_METADATA_ITEMS get full details and a logo. The rest only need
+        an IMDb id on top of what discover already returned; Simkl candidates carry no
+        title or poster, so they always take the full path.
+        """
         valid_items = [it for it in items if it.get("id")]
+        full_items = [it for i, it in enumerate(valid_items) if i < FULL_METADATA_ITEMS or not cls._has_listing(it)]
+        full_ids = {it["id"] for it in full_items}
+        light_items = [it for it in valid_items if it["id"] not in full_ids]
+
+        full_metas, light_metas = await asyncio.gather(
+            cls._fetch_full(tmdb_service, full_items, media_type, user_settings),
+            cls._fetch_light(tmdb_service, light_items, media_type, user_settings),
+        )
+        by_id = {**full_metas, **light_metas}
+        return [by_id[it["id"]] for it in valid_items if it["id"] in by_id]
+
+    @staticmethod
+    def _has_listing(item: dict[str, Any]) -> bool:
+        return bool((item.get("title") or item.get("name")) and item.get("poster_path"))
+
+    @classmethod
+    async def _fetch_full(
+        cls, tmdb_service: Any, items: list[dict[str, Any]], media_type: str, user_settings: Any
+    ) -> dict[int, dict[str, Any]]:
         query_type = "movie" if media_type == "movie" else "tv"
         sem = asyncio.Semaphore(DEFAULT_CONCURRENCY_LIMIT)
+        language = getattr(user_settings, "language", None) or "en-US"
 
-        async def _fetch_one(tid: int):
+        async def _one(tid: int) -> dict[str, Any] | None:
             async with sem:
                 try:
                     if query_type == "movie":
-                        return await tmdb_service.get_movie_details(tid)
-                    return await tmdb_service.get_tv_details(tid)
+                        details = await tmdb_service.get_movie_details(tid)
+                    else:
+                        details = await tmdb_service.get_tv_details(tid)
                 except Exception:
                     return None
-
-        tasks = [_fetch_one(it.get("id")) for it in valid_items]
-        details_list = await asyncio.gather(*tasks, return_exceptions=True)
-        details_list = [d for d in details_list if d and not isinstance(d, Exception)]
-
-        language = getattr(user_settings, "language", None) or "en-US"
-        mt = "movie" if media_type == "movie" else "tv"
-
-        async def _images_one(d: dict[str, Any]) -> dict[str, str]:
-            async with sem:
+                if not details:
+                    return None
                 try:
-                    return await tmdb_service.get_images_for_title(mt, d["id"], language=language)
+                    imgs = await tmdb_service.get_images_for_title(query_type, details["id"], language=language)
                 except Exception:
-                    return {}
+                    imgs = {}
+            return await cls.format_for_stremio(details, media_type, user_settings, logo_url=imgs.get("logo") or None)
 
-        successful_details = [d for d in details_list if d]
-        image_tasks = [_images_one(d) for d in successful_details]
-        images_list = await asyncio.gather(*image_tasks, return_exceptions=True)
+        metas = await asyncio.gather(*(_one(it["id"]) for it in items))
+        return {it["id"]: meta for it, meta in zip(items, metas) if meta}
 
-        format_task = []
-        for details, imgs in zip(successful_details, images_list):
-            logo_url = None
-            if isinstance(imgs, dict):
-                logo_url = imgs.get("logo") or None
-            format_task.append(cls.format_for_stremio(details, media_type, user_settings, logo_url=logo_url))
+    @classmethod
+    async def _fetch_light(
+        cls, tmdb_service: Any, items: list[dict[str, Any]], media_type: str, user_settings: Any
+    ) -> dict[int, dict[str, Any]]:
+        genre_names = movie_genres if media_type == "movie" else series_genres
 
-        formatted_list = await asyncio.gather(*format_task, return_exceptions=True)
+        async def _one(item: dict[str, Any]) -> dict[str, Any] | None:
+            imdb_id = item.get("_imdb_id") or (item.get("external_ids") or {}).get("imdb_id")
+            if not imdb_id:
+                imdb_id = await tmdb_service.get_imdb_id(media_type, item["id"])
+            if not imdb_id:
+                return None
+            genres = item.get("genres") or [
+                {"id": gid, "name": genre_names[gid]} for gid in item.get("genre_ids", []) if gid in genre_names
+            ]
+            details = {**item, "external_ids": {"imdb_id": imdb_id}, "genres": genres}
+            return await cls.format_for_stremio(details, media_type, user_settings)
 
-        for formatted in formatted_list:
-            if isinstance(formatted, Exception):
-                logger.warning(f"Error formatting metadata: {formatted}")
-                continue
-            if formatted:
-                final_results.append(formatted)
-
-        return final_results
+        metas = await asyncio.gather(*(_one(it) for it in items))
+        return {it["id"]: meta for it, meta in zip(items, metas) if meta}

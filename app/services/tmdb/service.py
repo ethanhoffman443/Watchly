@@ -57,7 +57,9 @@ class TMDBService:
             logger.exception(f"Unexpected error finding TMDB ID for IMDB {imdb_id}: {e}")
             return None, None
 
-    @alru_cache(maxsize=2000, ttl=86400)
+    # Large because every title past the head of a row resolves its IMDb id here,
+    # and each entry is a short string.
+    @alru_cache(maxsize=20000, ttl=86400)
     async def get_imdb_id(self, media_type: str, tmdb_id: int) -> str | None:
         """IMDb id for a TMDB id, or None when TMDB has no mapping or the lookup fails."""
         path = "tv" if media_type == "series" else "movie"

@@ -16,6 +16,7 @@ import { setProviderConnected, showNuvioConnected } from './accounts.js';
 import { getPreparedStremioProfiles, recallProviderAccount } from './auth.js';
 import { nuvioLogin, nuvioProfiles } from './nuvio.js';
 
+const MAX_RANDOM_GENRES = window.MAX_RANDOM_GENRES;
 const YEAR_RANGE_DEFAULTS = window.YEAR_RANGE_DEFAULTS || { min: 1970, max: new Date().getFullYear() };
 const LOADING_ICON = '<svg class="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
 
@@ -101,6 +102,8 @@ function getRequestPayload() {
         llm_model: document.getElementById('llmModel')?.value.trim() || '',
         excluded_movie_genres: Array.from(document.querySelectorAll('input[name="movie-genre"]:checked')).map(cb => cb.value),
         excluded_series_genres: Array.from(document.querySelectorAll('input[name="series-genre"]:checked')).map(cb => cb.value),
+        random_movie_genres: Array.from(document.querySelectorAll('input[name="random-movie-genre"]:checked')).map(cb => cb.value),
+        random_series_genres: Array.from(document.querySelectorAll('input[name="random-series-genre"]:checked')).map(cb => cb.value),
         watch_history_source: document.getElementById('watchHistorySource')?.value || 'stremio',
     };
 }
@@ -148,6 +151,8 @@ function buildTokenPayload(formData) {
             : undefined,
         excluded_movie_genres: formData.excluded_movie_genres,
         excluded_series_genres: formData.excluded_series_genres,
+        random_movie_genres: formData.random_movie_genres,
+        random_series_genres: formData.random_series_genres,
         watch_history_source: formData.watch_history_source,
         trakt_access_token: window._watchlyOAuth?.trakt?.access_token || undefined,
         trakt_refresh_token: window._watchlyOAuth?.trakt?.refresh_token || undefined,
@@ -316,6 +321,27 @@ function initializeFormSubmission() {
 function initializeGenreLists() {
     renderGenreList(movieGenreList, MOVIE_GENRES, 'movie-genre');
     renderGenreList(seriesGenreList, SERIES_GENRES, 'series-genre');
+    renderRandomGenreList(document.getElementById('randomMovieGenreList'), MOVIE_GENRES, 'random-movie-genre');
+    renderRandomGenreList(document.getElementById('randomSeriesGenreList'), SERIES_GENRES, 'random-series-genre');
+}
+
+function renderRandomGenreList(container, genres, name) {
+    if (!container) return;
+
+    container.innerHTML = genres.map(genre => `
+        <label class="cursor-pointer select-none">
+            <input type="checkbox" name="${name}" value="${genre.id}" class="peer sr-only">
+            <span class="inline-flex h-10 items-center rounded-full border border-white/10 bg-white/[0.03] px-3.5 text-sm text-neutral-200 transition hover:border-white/20 hover:text-white peer-checked:border-emerald-400/40 peer-checked:bg-emerald-500/10 peer-checked:text-emerald-200 peer-focus-visible:ring-2 peer-focus-visible:ring-accent/60">${genre.name}</span>
+        </label>
+    `).join('');
+
+    container.addEventListener('change', (event) => {
+        if (!event.target.checked) return;
+        if (container.querySelectorAll(`input[name="${name}"]:checked`).length > MAX_RANDOM_GENRES) {
+            event.target.checked = false;
+            showToast(`Pick up to ${MAX_RANDOM_GENRES} genres for the Random row`, 'error');
+        }
+    });
 }
 
 function renderGenreList(container, genres, namePrefix) {

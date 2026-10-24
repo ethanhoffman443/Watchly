@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.core.settings import DEFAULT_YEAR_MIN, CatalogConfig, LLMConfig, PosterRatingConfig
+from app.core.settings import DEFAULT_YEAR_MIN, MAX_RANDOM_GENRES, CatalogConfig, LLMConfig, PosterRatingConfig
 
 
 class TokenRequest(BaseModel):
@@ -16,6 +16,12 @@ class TokenRequest(BaseModel):
     poster_rating: PosterRatingConfig | None = Field(default=None, description="Poster rating provider configuration")
     excluded_movie_genres: list[str] = Field(default_factory=list, description="List of movie genre IDs to exclude")
     excluded_series_genres: list[str] = Field(default_factory=list, description="List of series genre IDs to exclude")
+    random_movie_genres: list[str] = Field(
+        default_factory=list, max_length=MAX_RANDOM_GENRES, description="Movie genre IDs the Random row draws from"
+    )
+    random_series_genres: list[str] = Field(
+        default_factory=list, max_length=MAX_RANDOM_GENRES, description="Series genre IDs the Random row draws from"
+    )
     popularity: Literal["mainstream", "balanced", "gems", "all"] = Field(
         default="balanced", description="Popularity for TMDB API"
     )

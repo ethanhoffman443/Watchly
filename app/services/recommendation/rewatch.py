@@ -13,7 +13,6 @@ from app.services.profile.sampling import sample_items
 from app.services.profile.scorer import ProfileScorer
 from app.services.profile.scoring import ScoringService
 from app.services.recommendation.filtering import RecommendationFiltering
-from app.services.recommendation.metadata import RecommendationMetadata
 from app.services.recommendation.scoring import RecommendationScoring
 from app.services.recommendation.utils import content_type_to_mtype, resolve_tmdb_id
 from app.services.tmdb.service import TMDBService
@@ -21,7 +20,7 @@ from app.services.tmdb.service import TMDBService
 COOLDOWN = timedelta(days=180)
 # Drawn from the highest-signal items so the detail fetches mostly hit what the
 # profile build already cached.
-POOL_SIZE = 50
+POOL_SIZE = 300
 REACTION_BOOST = {"loved": 1.2, "liked": 1.1, "watched": 1.0}
 
 
@@ -93,7 +92,4 @@ class RewatchService:
         scored.sort(key=lambda x: x[0], reverse=True)
         top = scored[: limit * 2]
         picked = sorted(random.sample(top, k=min(limit, len(top))), key=lambda x: x[0], reverse=True)
-
-        return await RecommendationMetadata.fetch_batch(
-            self.tmdb_service, [item for _, item in picked], content_type, user_settings=self.user_settings
-        )
+        return [item for _, item in picked]

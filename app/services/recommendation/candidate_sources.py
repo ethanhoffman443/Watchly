@@ -56,21 +56,17 @@ class CandidateFetcher:
         top_items = sample_items(library_items, content_type, self.scoring_service, max_items=15)
 
         candidates = []
-        tasks = []
+        tmdb_ids = await asyncio.gather(
+            *(resolve_tmdb_id(s.item.id, self.tmdb_service) for s in top_items if s.item.id)
+        )
+        tasks = [
+            self.tmdb_service.get_recommendations(tmdb_id, mtype, page=page)
+            for tmdb_id in tmdb_ids
+            if tmdb_id
+            for page in (1, 2)
+        ]
 
-        for item in top_items:
-            item = item.item
-            item_id = item.id
-            if not item_id:
-                continue
-
-            tmdb_id = await resolve_tmdb_id(item_id, self.tmdb_service)
-            if not tmdb_id:
-                continue
-
-            tasks.append(self.tmdb_service.get_recommendations(tmdb_id, mtype, page=1))
-
-        logger.info(f"Fetching recommendations from {len(tasks)} top library items")
+        logger.info(f"Fetching {len(tasks)} recommendation pages from top library items")
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         failed_count = 0
@@ -132,8 +128,10 @@ class CandidateFetcher:
         logger.info(f"Fetched {len(candidates)} candidates from Simkl")
         return candidates
 
-    def _add_discover_task(self, tasks: list, mtype: str, without_genres: str | None, **kwargs: Any) -> None:
-        """Add a discover task to the list of tasks with default parameters."""
+    def _add_discover_task(
+        self, tasks: list, mtype: str, without_genres: str | None, pages: int, **kwargs: Any
+    ) -> None:
+        """Queue pages 1..pages of one discover query with the user's filters applied."""
         sort_by = RecommendationFiltering.get_sort_by_preference(self.user_settings)
         params = {
             "sort_by": sort_by,
@@ -143,7 +141,7 @@ class CandidateFetcher:
             params["without_genres"] = without_genres
 
         params = apply_discover_filters(params, self.user_settings)
-        tasks.append(self.tmdb_service.get_discover(mtype, **params))
+        tasks.extend(self.tmdb_service.get_discover(mtype, page=page, **params) for page in range(1, pages + 1))
 
     async def fetch_discover_with_profile(
         self, profile: TasteProfile, content_type: str, mtype: str
@@ -171,19 +169,18 @@ class CandidateFetcher:
                 mtype,
                 without_genres,
                 with_genres="|".join(str(g) for g in genre_ids),
-                page=1,
+                pages=3,
             )
 
         if top_keywords:
             keyword_ids = [k[0] for k in top_keywords]
-            for page in range(1, 3):
-                self._add_discover_task(
-                    tasks,
-                    mtype,
-                    without_genres,
-                    with_keywords="|".join(str(k) for k in keyword_ids),
-                    page=page,
-                )
+            self._add_discover_task(
+                tasks,
+                mtype,
+                without_genres,
+                with_keywords="|".join(str(k) for k in keyword_ids),
+                pages=3,
+            )
 
         if top_directors:
             director_ids = [d[0] for d in top_directors]
@@ -192,7 +189,7 @@ class CandidateFetcher:
                 mtype,
                 without_genres,
                 with_crew="|".join(str(d) for d in director_ids),
-                page=1,
+                pages=1,
             )
 
         if top_cast:
@@ -202,7 +199,7 @@ class CandidateFetcher:
                 mtype,
                 without_genres,
                 with_cast="|".join(str(c) for c in cast_ids),
-                page=1,
+                pages=2,
             )
 
         if top_eras:
@@ -216,17 +213,12 @@ class CandidateFetcher:
                 params = {
                     f"{prefix}.gte": f"{year_start}-01-01",
                     f"{prefix}.lte": lte_prefix,
-                    "page": 1,
                 }
-                self._add_discover_task(tasks, mtype, without_genres, **params)
+                self._add_discover_task(tasks, mtype, without_genres, pages=2, **params)
 
         if top_countries:
             country_codes = [c[0] for c in top_countries]
-            params = {
-                "with_origin_country": "|".join(country_codes),
-                "page": 1,
-            }
-            self._add_discover_task(tasks, mtype, without_genres, **params)
+            self._add_discover_task(tasks, mtype, without_genres, pages=2, with_origin_country="|".join(country_codes))
 
         logger.debug(f"Fetching {len(tasks)} discover queries with profile features")
         results = await asyncio.gather(*tasks, return_exceptions=True)

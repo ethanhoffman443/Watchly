@@ -7,19 +7,13 @@ from app.core.settings import UserSettings
 from app.models.library import LibraryCollection
 from app.models.profile import TasteProfile
 from app.services.profile.scorer import ProfileScorer
-from app.services.recommendation.filtering import (
-    RecommendationFiltering,
-    filter_by_genres,
-    filter_items_by_settings,
-    filter_watched_by_imdb,
-)
-from app.services.recommendation.metadata import RecommendationMetadata
+from app.services.recommendation.filtering import RecommendationFiltering, filter_by_genres, filter_items_by_settings
 from app.services.recommendation.scoring import RecommendationScoring
 from app.services.recommendation.utils import content_type_to_mtype, resolve_tmdb_id
 from app.services.simkl import simkl_service
 from app.services.tmdb.service import TMDBService
 
-TOP_ITEMS_LIMIT = 10
+TOP_ITEMS_LIMIT = 15
 
 
 class AllBasedService:
@@ -37,7 +31,6 @@ class AllBasedService:
         library_items: LibraryCollection,
         content_type: str,
         watched_tmdb: set[int],
-        watched_imdb: set[str],
         limit: int = 20,
         item_type: str = "loved",
         profile: TasteProfile | None = None,
@@ -56,7 +49,6 @@ class AllBasedService:
             library_items: Library items dict
             content_type: Content type (movie/series)
             watched_tmdb: Set of watched TMDB IDs
-            watched_imdb: Set of watched IMDB IDs
             limit: Number of items to return
             item_type: "loved" or "liked"
             profile: Optional profile for scoring (if None, uses popularity only)
@@ -169,18 +161,7 @@ class AllBasedService:
 
         logger.info(f"Scored {len(scored) if scored else len(filtered)} candidates")
 
-        # Enrich metadata
-        enriched = await RecommendationMetadata.fetch_batch(
-            self.tmdb_service, filtered, content_type, user_settings=self.user_settings
-        )
-
-        logger.info(f"Enriched {len(enriched)} items")
-
-        # Final filter (remove watched by IMDB ID)
-        final = filter_watched_by_imdb(enriched, watched_imdb)
-
-        # Return top N
-        return final
+        return filtered
 
     async def _fetch_simkl_candidates(self, top_items: list[dict[str, Any]], mtype: str) -> list[dict[str, Any]]:
         """
@@ -243,14 +224,16 @@ class AllBasedService:
 
         combined = {}
 
-        # Fetch 1 page each for recommendations
-        try:
-            res = await self.tmdb_service.get_recommendations(tmdb_id, mtype, page=1)
+        pages = await asyncio.gather(
+            *(self.tmdb_service.get_recommendations(tmdb_id, mtype, page=p) for p in (1, 2)), return_exceptions=True
+        )
+        for res in pages:
+            if isinstance(res, Exception):
+                logger.debug(f"Error fetching recommendations for {tmdb_id}: {res}")
+                continue
             for item in res.get("results", []):
                 candidate_id = item.get("id")
                 if candidate_id:
                     combined[candidate_id] = item
-        except Exception as e:
-            logger.debug(f"Error fetching recommendations for {tmdb_id}: {e}")
 
         return list(combined.values())

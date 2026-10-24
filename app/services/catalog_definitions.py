@@ -5,11 +5,14 @@ from typing import Any, cast
 
 from loguru import logger
 
-from app.core.constants import DISCOVER_ONLY_EXTRA
+from app.core.constants import DISCOVER_ONLY_EXTRA, HOME_EXTRA, RANDOM_ANY_GENRE, RANDOM_MY_GENRES, SKIP_EXTRA
 from app.core.settings import CatalogConfig, LLMConfig, UserSettings, resolve_llm_config
 from app.models.library import LibraryCollection
 from app.services.profile.service import ProfileService
+from app.services.recommendation.filtering import RecommendationFiltering
+from app.services.recommendation.random_picks import RANDOM_CATALOG_ID
 from app.services.row_generator import RowGeneratorService
+from app.services.tmdb.genre import movie_genres, series_genres
 from app.services.tmdb.service import get_tmdb_service
 from app.services.user_cache import user_cache
 
@@ -29,13 +32,45 @@ def get_catalogs_from_config(
         enabled_movie = getattr(config, "enabled_movie", default_movie)
         enabled_series = getattr(config, "enabled_series", default_series)
         display_at_home = getattr(config, "display_at_home", True)
-        extra = DISCOVER_ONLY_EXTRA if not display_at_home else []
+        extra = DISCOVER_ONLY_EXTRA if not display_at_home else HOME_EXTRA
 
         if enabled_movie:
             catalogs.append({"type": "movie", "id": cat_id, "name": name, "extra": extra})
         if enabled_series:
             catalogs.append({"type": "series", "id": cat_id, "name": name, "extra": extra})
 
+    return catalogs
+
+
+def get_random_catalogs(user_settings: UserSettings) -> list[dict[str, Any]]:
+    """The Random rows, each with a genre dropdown for Stremio's Discover tab.
+
+    With no genre picked (always the case on the home board) a row draws from the
+    saved genres, so the dropdown only offers "My genres" once there are some.
+    """
+    config = next((c for c in user_settings.catalogs if c.id == RANDOM_CATALOG_ID), None)
+    if not config or not config.enabled:
+        return []
+
+    catalogs = []
+    for content_type, enabled, genre_map, saved in (
+        ("movie", config.enabled_movie, movie_genres, user_settings.random_movie_genres),
+        ("series", config.enabled_series, series_genres, user_settings.random_series_genres),
+    ):
+        if not enabled:
+            continue
+        excluded = set(RecommendationFiltering.get_excluded_genre_ids(user_settings, content_type))
+        options = ([RANDOM_MY_GENRES] if saved else []) + [RANDOM_ANY_GENRE]
+        options += [name for gid, name in genre_map.items() if gid not in excluded or str(gid) in saved]
+        genre_extra = {"name": "genre", "isRequired": not config.display_at_home, "options": options}
+        catalogs.append(
+            {
+                "type": content_type,
+                "id": RANDOM_CATALOG_ID,
+                "name": config.name or "Random Picks",
+                "extra": [genre_extra, SKIP_EXTRA],
+            }
+        )
     return catalogs
 
 
@@ -131,7 +166,7 @@ class DynamicCatalogService:
         # "Because you loved " with a trailing space, which Stremio shows as
         # an empty catalog name.
         suffix = (item_name or "").strip() or "this title"
-        extra = DISCOVER_ONLY_EXTRA if not display_at_home else []
+        extra = DISCOVER_ONLY_EXTRA if not display_at_home else HOME_EXTRA
         return {
             "type": self.normalize_type(item_type),
             "id": catalog_id,
@@ -177,6 +212,7 @@ class DynamicCatalogService:
             await self._add_item_based_rows(catalogs, library_items, mtype, item_cfg, row_slots)
 
         catalogs.extend(get_catalogs_from_config(user_settings, "watchly.rec", "Top Picks for You", True, True))
+        catalogs.extend(get_random_catalogs(user_settings))
         catalogs.extend(
             get_catalogs_from_config(
                 user_settings,
@@ -234,7 +270,7 @@ class DynamicCatalogService:
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         catalogs: list[dict[str, Any]] = []
-        extra = DISCOVER_ONLY_EXTRA if not display_at_home else []
+        extra = DISCOVER_ONLY_EXTRA if not display_at_home else HOME_EXTRA
 
         for result in results:
             if not isinstance(result, tuple):

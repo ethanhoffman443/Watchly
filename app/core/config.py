@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     TMDB_API_KEY: str | None = None
+    # Per process. TMDB allows roughly 50/s per IP, so with several workers on one
+    # host divide this between them.
+    TMDB_MAX_REQUESTS_PER_SECOND: int = 40
     PORT: int = 8000
     ADDON_ID: str = "com.bimal.watchly"
     ADDON_NAME: str = "Watchly"

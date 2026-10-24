@@ -6,8 +6,7 @@ from loguru import logger
 
 from app.core.settings import UserSettings
 from app.models.profile import TasteProfile
-from app.services.recommendation.filtering import RecommendationFiltering, filter_watched_by_imdb
-from app.services.recommendation.metadata import RecommendationMetadata
+from app.services.recommendation.filtering import RecommendationFiltering
 from app.services.recommendation.utils import content_type_to_mtype
 from app.services.tmdb.service import TMDBService
 
@@ -76,7 +75,6 @@ class CreatorsService:
         profile: TasteProfile,
         content_type: str,
         watched_tmdb: set[int],
-        watched_imdb: set[str],
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         mtype = content_type_to_mtype(content_type)
@@ -109,7 +107,7 @@ class CreatorsService:
                 tasks.append(self._fetch_discover_page(mtype, discover_params, dir_id, "director"))
 
         for cast_id, _ in selected_cast:
-            for page in [1, 2]:
+            for page in [1, 2, 3]:
                 discover_params = {
                     "with_cast": str(cast_id),
                     "page": page,
@@ -148,15 +146,7 @@ class CreatorsService:
 
             filtered.append(item)
 
-        # Enrich metadata
-        enriched = await RecommendationMetadata.fetch_batch(
-            self.tmdb_service, filtered, content_type, user_settings=self.user_settings
-        )
-
-        # Final filter (remove watched by IMDB ID)
-        final = filter_watched_by_imdb(enriched, watched_imdb)
-
-        return final
+        return filtered
 
     async def _fetch_discover_page(
         self,

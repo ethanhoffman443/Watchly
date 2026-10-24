@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A Random row for movies and series. With no genre picked it draws from up to 5 genres saved on the configure page (a title needs only one of them), or from anything when none are saved. Its Discover dropdown switches to a single genre or "Any genre". Titles are sampled evenly across every page of matching results and the row reshuffles hourly.
+- Catalogs declare Stremio's `skip` extra and are served 100 titles a page, so Discover keeps loading as you scroll.
+
+### Changed
+
+- Rows hold up to 250 titles instead of 20 to 60. Only the first 40 of a row pay for full details and a logo; the rest are built from the discover payload plus an IMDb id, one small TMDB call each.
+- TMDB calls are paced process-wide (`TMDB_MAX_REQUESTS_PER_SECOND`, default 40) with at most 20 in flight, instead of a separate 30-request semaphore per row, which overran TMDB's per-IP limit when Stremio opened every row at once.
+- Engines return ranked candidates; trimming, enrichment and the watched filter run once in the catalog service.
+- A shuffled row keeps one order per hour, so paging through it neither repeats nor skips titles.
+
 ## 1.17.2 - 2026-10-22
 
 ### Fixed

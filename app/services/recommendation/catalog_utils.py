@@ -1,4 +1,5 @@
 import random
+import time
 from typing import Any
 
 from app.core.settings import UserSettings
@@ -12,8 +13,11 @@ def should_shuffle(user_settings: UserSettings, catalog_id: str) -> bool:
 def shuffle_data_if_needed(
     user_settings: UserSettings, catalog_id: str, data: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
+    # Seeded by the hour rather than shuffled per request: Stremio fetches a long row
+    # one page at a time, and a fresh order per page would repeat some titles and
+    # never show others.
     if should_shuffle(user_settings, catalog_id):
-        random.shuffle(data)
+        random.Random(f"{catalog_id}:{int(time.time() // 3600)}").shuffle(data)
     return data
 
 

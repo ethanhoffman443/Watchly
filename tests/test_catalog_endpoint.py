@@ -7,7 +7,7 @@ client = TestClient(app)
 
 
 def test_catalog_endpoint_keeps_cache_header_for_non_empty_results(monkeypatch):
-    async def fake_get_catalog(token: str, content_type: str, catalog_id: str):
+    async def fake_get_catalog(token: str, content_type: str, catalog_id: str, genre: str | None = None):
         return {"metas": [{"id": "tt1234567", "type": "movie", "name": "Example"}]}, {"Cache-Control": "public"}
 
     monkeypatch.setattr(catalog_service, "get_catalog", fake_get_catalog)
@@ -20,7 +20,7 @@ def test_catalog_endpoint_keeps_cache_header_for_non_empty_results(monkeypatch):
 
 
 def test_catalog_endpoint_marks_empty_results_as_no_cache(monkeypatch):
-    async def fake_get_catalog(token: str, content_type: str, catalog_id: str):
+    async def fake_get_catalog(token: str, content_type: str, catalog_id: str, genre: str | None = None):
         return {"metas": []}, {"Cache-Control": "public"}
 
     monkeypatch.setattr(catalog_service, "get_catalog", fake_get_catalog)
@@ -37,7 +37,7 @@ def test_catalog_endpoint_accepts_minted_tokens(monkeypatch):
     route's token sanity check must accept them, not just legacy alnum ids."""
     from app.services.token_store import token_store
 
-    async def fake_get_catalog(token: str, content_type: str, catalog_id: str):
+    async def fake_get_catalog(token: str, content_type: str, catalog_id: str, genre: str | None = None):
         return {"metas": [{"id": "tt1234567", "type": "movie", "name": "Example"}]}, {}
 
     monkeypatch.setattr(catalog_service, "get_catalog", fake_get_catalog)

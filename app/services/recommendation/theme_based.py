@@ -1,8 +1,10 @@
 import asyncio
+import math
 from typing import Any
 
 from loguru import logger
 
+from app.core.constants import ENRICH_HEADROOM
 from app.models.profile import TasteProfile
 from app.services.profile.constants import (
     RUNTIME_BUCKET_MEDIUM_MAX_MOVIE,
@@ -11,12 +13,7 @@ from app.services.profile.constants import (
     RUNTIME_BUCKET_SHORT_MAX_SERIES,
 )
 from app.services.profile.scorer import ProfileScorer
-from app.services.recommendation.filtering import (
-    RecommendationFiltering,
-    apply_discover_filters,
-    filter_watched_by_imdb,
-)
-from app.services.recommendation.metadata import RecommendationMetadata
+from app.services.recommendation.filtering import RecommendationFiltering, apply_discover_filters
 from app.services.recommendation.scoring import RecommendationScoring
 from app.services.recommendation.utils import content_type_to_mtype
 from app.services.tmdb.service import TMDBService
@@ -45,12 +42,10 @@ class ThemeBasedService:
         content_type: str,
         profile: TasteProfile | None = None,
         watched_tmdb: set[int] | None = None,
-        watched_imdb: set[str] | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """Get recommendations for a role-based theme."""
         watched_tmdb = watched_tmdb or set()
-        watched_imdb = watched_imdb or set()
 
         # 1. Parse roles and values
         anchors, flavors, fallbacks = self._parse_theme_id(theme_id)
@@ -79,7 +74,11 @@ class ThemeBasedService:
                 without = [g for g in excluded_ids if g not in with_ids]
                 if without:
                     combined_params["without_genres"] = "|".join(str(g) for g in without)
-            fetch_tasks.append(self._fetch_discover_candidates(content_type, combined_params, pages=[1, 2, 3]))
+            fetch_tasks.append(
+                self._fetch_discover_candidates(
+                    content_type, combined_params, max_pages=math.ceil(limit * ENRICH_HEADROOM / 20)
+                )
+            )
 
         # Execute Phase 1
         results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
@@ -119,7 +118,7 @@ class ThemeBasedService:
                     if without:
                         params["without_genres"] = "|".join(str(g) for g in without)
 
-                fetch_tasks.append(self._fetch_discover_candidates(content_type, params, pages=[1, 2]))
+                fetch_tasks.append(self._fetch_discover_candidates(content_type, params, max_pages=5))
 
             # Execute Phase 2
             results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
@@ -181,13 +180,10 @@ class ThemeBasedService:
             if item["id"] not in seen and item["id"] not in watched_tmdb:
                 unique_results.append(item)
                 seen.add(item["id"])
-            if len(unique_results) >= limit * 2:
+            if len(unique_results) >= limit * ENRICH_HEADROOM:
                 break
 
-        enriched = await RecommendationMetadata.fetch_batch(
-            self.tmdb_service, unique_results, content_type, user_settings=self.user_settings
-        )
-        return filter_watched_by_imdb(enriched, watched_imdb)[:limit]
+        return unique_results
 
     def _parse_theme_id(self, theme_id: str) -> tuple[dict, dict, dict]:
         """Parse role-based ID: watchly.theme.a:g123.f:k456.b:y1990"""
@@ -332,7 +328,7 @@ class ThemeBasedService:
         if "with_keywords" in params:
             new_params = params.copy()
             del new_params["with_keywords"]
-            return await self._fetch_discover_candidates(content_type, new_params, pages=[1, 2])
+            return await self._fetch_discover_candidates(content_type, new_params, max_pages=5)
 
         return []
 
@@ -354,26 +350,24 @@ class ThemeBasedService:
             return [1, 2, 3]  # 3 pages
 
     async def _fetch_discover_candidates(
-        self, content_type: str, params: dict[str, Any], pages: list[int]
+        self, content_type: str, params: dict[str, Any], max_pages: int
     ) -> list[dict[str, Any]]:
+        """Pages 1..max_pages of a discover query, stopping at the query's last page.
+
+        Page 1 goes first because it carries total_pages: narrow themes often have
+        only a page or two, and asking past the end costs a request each for nothing.
         """
-        Fetch candidates from TMDB discover API.
-
-        Args:
-            content_type: Content type
-            params: Discover API parameters
-            pages: List of page numbers to fetch
-
-        Returns:
-            List of candidate items
-        """
-        candidates = []
-
-        # Apply global user filters (year range, popularity)
         params = apply_discover_filters(params, self.user_settings)
 
-        tasks = [self.tmdb_service.get_discover(content_type, page=p, **params) for p in pages]
+        try:
+            first = await self.tmdb_service.get_discover(content_type, page=1, **params)
+        except Exception as e:
+            logger.debug(f"Error fetching discover: {e}")
+            return []
 
+        candidates = list(first.get("results", []))
+        last_page = min(first.get("total_pages", 1), max_pages)
+        tasks = [self.tmdb_service.get_discover(content_type, page=p, **params) for p in range(2, last_page + 1)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for res in results:

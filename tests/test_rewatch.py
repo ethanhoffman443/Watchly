@@ -59,7 +59,7 @@ def item(imdb: str, days_ago: int, loved: bool = False) -> StremioLibraryItem:
 def picks(library: LibraryCollection, tmdb: FakeTMDB, settings=None, profile=None) -> list[str]:
     service = RewatchService(tmdb, settings or get_default_settings())
     result = asyncio.run(service.get_rewatch_picks(library, "movie", profile))
-    return [m["id"] for m in result]
+    return [m["external_ids"]["imdb_id"] for m in result]
 
 
 def test_watched_titles_are_served_and_recent_ones_held_back():

@@ -1,7 +1,19 @@
 RECOMMENDATIONS_CATALOG_NAME: str = "Top Picks For You"
-DEFAULT_CATALOG_LIMIT: int = 20
-
-MAX_CATALOG_ITEMS: int = 100
+DEFAULT_CATALOG_LIMIT: int = 250
+# Stremio asks for the next page with skip=<items received so far> and stops at an
+# empty page, so any size works; 100 matches stremio-core's own CATALOG_PAGE_SIZE.
+CATALOG_PAGE_SIZE: int = 100
+# Candidates enriched per row, as a share of the row limit. Enrichment drops titles
+# TMDB has no IMDb id for and titles the user watched (Trakt/Simkl users only show up
+# as watched once the IMDb id is known), so trimming to exactly the limit came up short.
+ENRICH_HEADROOM: float = 1.2
+# Only the head of a row gets the full detail + logo lookups; the rest is built from
+# the discover payload plus an IMDb id. A full lookup is two TMDB calls per title, and
+# 250-title rows at that rate ran into TMDB's per-IP limit on a cold home screen.
+FULL_METADATA_ITEMS: int = 40
+# Random rows rebuild this often instead of every CATALOG_REFRESH_INTERVAL_SECONDS,
+# otherwise "random" would be the same list for a day.
+RANDOM_CATALOG_REFRESH_SECONDS: int = 3600
 
 DEFAULT_CONCURRENCY_LIMIT: int = 30
 
@@ -43,7 +55,19 @@ MANIFEST_CACHE_TTL_SECONDS: int = 86400
 USER_CACHE_TTL_SECONDS: int = 60 * 60 * 24 * 90  # 90 days
 
 
-DISCOVER_ONLY_EXTRA: list[dict] = [{"name": "genre", "isRequired": True, "options": ["All"], "optionsLimit": 1}]
+# Declaring skip is what makes Stremio page a catalog; without it a row is whatever
+# the first response holds.
+SKIP_EXTRA: dict = {"name": "skip"}
+HOME_EXTRA: list[dict] = [SKIP_EXTRA]
+DISCOVER_ONLY_EXTRA: list[dict] = [
+    {"name": "genre", "isRequired": True, "options": ["All"], "optionsLimit": 1},
+    SKIP_EXTRA,
+]
+
+# Genre options of the Random row besides the genre names themselves. "My genres" is
+# what the row shows with no genre picked; it is only offered once some are saved.
+RANDOM_MY_GENRES: str = "My genres"
+RANDOM_ANY_GENRE: str = "Any genre"
 
 
 # Single source of truth for the "Discovery" preference. Every threshold is a
